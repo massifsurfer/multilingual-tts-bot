@@ -11,11 +11,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.bot.admin import admin_router
+from app.bot.onboarding import onboarding_router
 from app.bot.privacy import privacy_router
 from app.bot.voice import voice_router
 from app.config.settings import Settings
 from app.database.connection import create_database_engine, initialize_database
-from app.database.models import AbuseEvent, AbuseEventType, RestrictionAudit, TelegramIdentity
+from app.database.models import AbuseEvent, AbuseEventType, Language, RestrictionAudit, TelegramIdentity
 from app.services.abuse import AbuseProtection
 from app.services.maintenance import Maintenance
 from app.services.participants import Participants
@@ -51,8 +52,9 @@ class SecurityRoutesTest(IsolatedAsyncioTestCase):
             max_bytes=self.settings.max_voice_bytes, max_seconds=self.settings.max_voice_seconds,
         )
         self.dispatcher.include_router(privacy_router(
-            Maintenance(self.sessions, LocalStorage(self.root / "audio"))
+            Maintenance(self.sessions, LocalStorage(self.root / "audio")), self.participants
         ))
+        self.dispatcher.include_router(onboarding_router(self.participants, "Terms"))
         self.dispatcher.include_router(voice_router(recordings, self.abuse))
         self.update_id = 0
 
@@ -66,6 +68,7 @@ class SecurityRoutesTest(IsolatedAsyncioTestCase):
             from_user=User(id=sender, is_bot=False, first_name="Test"),
             **payload,
         )
+        self.bot.session.make_request.return_value = message
         await self.dispatcher.feed_update(self.bot, Update(update_id=self.update_id, message=message))
         if self.bot.session.make_request.await_count:
             request = self.bot.session.make_request.await_args.args[1]
@@ -133,19 +136,16 @@ class SecurityRoutesTest(IsolatedAsyncioTestCase):
         callback_data = confirmation.inline_keyboard[0][0].callback_data
         self.assertTrue(await self.participants.is_active(7))
 
-        for sender in (8, 7):
-            user = User(id=sender, is_bot=False, first_name="Test")
-            message = Message(
-                message_id=2, date=datetime.now(UTC), chat=Chat(id=sender, type="private"),
-            )
-            query = CallbackQuery(
-                id=str(sender), from_user=user, chat_instance="test", message=message,
-                data=callback_data,
-            )
-            await self.dispatcher.feed_update(
-                self.bot, Update(update_id=sender + 10, callback_query=query)
-            )
-            self.assertEqual(await self.participants.is_active(7), sender == 8)
+        confirmation_id = self.update_id
+        await self.click(8, callback_data, confirmation_id)
+        self.assertTrue(await self.participants.is_active(7))
+        await self.click(7, "delete:cancel", confirmation_id)
+        await self.click(7, callback_data, confirmation_id)
+        self.assertTrue(await self.participants.is_active(7))
+
+        await self.feed(7, text="/delete_data")
+        await self.click(7, callback_data, self.update_id)
+        self.assertFalse(await self.participants.is_active(7))
 
         async with self.sessions() as session:
             self.assertIsNone(await session.get(TelegramIdentity, 7))
@@ -156,3 +156,81 @@ class SecurityRoutesTest(IsolatedAsyncioTestCase):
         )
         self.assertEqual(await self.feed(7, voice=voice), "Send a valid Telegram voice message.")
         self.bot.download.assert_not_awaited()
+
+    async def click(self, sender, data, message_id=None):
+        self.update_id += 1
+        user = User(id=sender, is_bot=False, first_name="Test")
+        message = Message(
+            message_id=message_id or self.update_id, date=datetime.now(UTC),
+            chat=Chat(id=sender, type="private"),
+        )
+        self.bot.session.make_request.reset_mock()
+        self.bot.session.make_request.return_value = message
+        query = CallbackQuery(
+            id=str(self.update_id), from_user=user, chat_instance="test", message=message, data=data,
+        )
+        await self.dispatcher.feed_update(
+            self.bot, Update(update_id=self.update_id, callback_query=query)
+        )
+        return self.bot.session.make_request.await_args.args[1]
+
+    async def test_settings_back_and_saved_dialect(self):
+        await self.feed(7, text="Settings")
+        empty = await self.click(7, "settings:language")
+        self.assertEqual(empty.reply_markup.inline_keyboard[0][0].text, "Back")
+        self.assertEqual((await self.click(7, "settings:menu")).text, "Settings")
+        self.assertEqual((await self.click(7, "settings:home")).text, "Choose an action.")
+
+        async with self.sessions.begin() as session:
+            russian = Language(name="Russian", code="rus")
+            chechen = Language(name="Chechen", code="che")
+            session.add_all([russian, chechen])
+        await self.click(7, f"lang:{russian.language_id}")
+        await self.feed(7, text="Northern")
+        await self.click(7, f"lang:{chechen.language_id}")
+        await self.feed(7, text="Continue without dialect")
+        prompt = await self.click(7, f"lang:{russian.language_id}")
+        self.assertIn("Current dialect: Northern", prompt.text)
+        await self.feed(7, text="Keep current dialect")
+        await self.click(7, f"lang:{russian.language_id}")
+        await self.feed(7, text="Back")
+        self.assertEqual((await self.participants.active_language(7)).dialect, "Northern")
+        await self.click(7, f"lang:{russian.language_id}")
+        await self.feed(7, text="Clear dialect")
+        self.assertIsNone((await self.participants.active_language(7)).dialect)
+
+    async def test_cancel_pause_and_consent_invalidates_old_confirmation(self):
+        self.assertEqual((await self.click(7, "settings:participation")).text, "Participation")
+        self.assertEqual((await self.click(7, "settings:menu")).text, "Settings")
+        await self.click(7, "settings:stop")
+        confirmation_id = self.update_id
+        self.assertEqual((await self.click(7, "pause:cancel", confirmation_id)).text, "Participation")
+        await self.click(7, "pause:confirm", confirmation_id)
+        self.assertTrue(await self.participants.is_active(7))
+
+        await self.feed(7, text="/stop")
+        confirmation_id = self.update_id
+        self.assertEqual((await self.click(7, "pause:cancel", confirmation_id)).text, "Choose an action.")
+        await self.feed(8, text="/start")
+        confirmation_id = self.update_id
+        markup = self.bot.session.make_request.await_args.args[1].reply_markup
+        consent = markup.inline_keyboard[0][0].callback_data
+        await self.click(8, "consent:cancel", confirmation_id)
+        await self.click(8, consent, confirmation_id)
+        self.assertFalse(await self.participants.is_active(8))
+
+    async def test_settings_stats_and_delete_navigation(self):
+        await self.feed(7, text="Settings")
+        menu = self.bot.session.make_request.await_args.args[1].reply_markup
+        buttons = {row[0].text: row[0].callback_data for row in menu.inline_keyboard}
+        stats = await self.click(7, buttons["Stats"])
+        self.assertIn("Completed tasks: 0", stats.text)
+        back = stats.reply_markup.inline_keyboard[0][0].callback_data
+        self.assertEqual((await self.click(7, back)).text, "Settings")
+        deletion = await self.click(7, buttons["Delete data"])
+        confirmation_id = self.update_id
+        confirm, cancel = deletion.reply_markup.inline_keyboard[0]
+        result = await self.click(7, cancel.callback_data, confirmation_id)
+        self.assertEqual(result.reply_markup, menu)
+        await self.click(7, confirm.callback_data, confirmation_id)
+        self.assertTrue(await self.participants.is_active(7))

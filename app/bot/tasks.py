@@ -44,12 +44,12 @@ def tasks_router(assignments: Assignments, abuse: AbuseProtection) -> Router:
             "• <b>Next text</b> — Get a prompt and read it in a voice message.\n"
             "• <b>Record another take</b> — Redo your last recording.\n"
             "• <b>Skip task</b> — Skip a prompt or cancel a retake.\n"
-            "• <b>Settings</b> — Change your language or dialect.\n"
-            "• <b>Done</b> — Finish editing your dialect.\n"
+            "• <b>Settings</b> — Manage language, dialect, and participation.\n"
+            "• <b>Keep current dialect</b> — Keep your saved dialect.\n"
             "• <b>Clear dialect</b> — Remove your saved dialect.\n"
-            "• <b>Stop participation</b> — Pause from Settings.\n"
-            "• <b>/stats</b> — See your progress.\n"
-            "• <b>/delete_data</b> — Request deletion.",
+            "• <b>Stop participation</b> — Open Settings → Participation to pause.\n"
+            "• <b>Stats</b> (/stats) — See your progress.\n"
+            "• <b>Delete data</b> (/delete_data) — Request deletion.",
             parse_mode=ParseMode.HTML,
         )
 

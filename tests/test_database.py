@@ -108,3 +108,27 @@ class DatabaseTest(IsolatedAsyncioTestCase):
                 ):
                     self.assertEqual(await session.scalar(select(func.count()).select_from(model)), 0)
                 self.assertEqual(await session.scalar(select(func.count()).select_from(CorpusText)), 1)
+
+    async def test_corpus_configuration_controls_active_languages(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "test.sqlite"
+            await initialize_database(path, (("rus", "Russian"), ("che", "Chechen")))
+            engine = create_database_engine(path)
+            self.addAsyncCleanup(engine.dispose)
+            sessions = async_sessionmaker(engine)
+            async with sessions.begin() as session:
+                russian_id = await session.scalar(select(Language.language_id).where(Language.code == "rus"))
+                session.add(CorpusText(language_id=russian_id, text="Текст"))
+
+            await initialize_database(path, (("che", "Chechen"),))
+            async with sessions() as session:
+                self.assertEqual(list(await session.scalars(select(Language.code).where(Language.is_active))), ["che"])
+                self.assertEqual(await session.scalar(select(CorpusText.language_id)), russian_id)
+
+            await initialize_database(path, ())
+            async with sessions() as session:
+                self.assertIsNone(await session.scalar(select(Language.code).where(Language.is_active)))
+
+            await initialize_database(path, (("rus", "Russian"),))
+            async with sessions() as session:
+                self.assertEqual(await session.scalar(select(Language.language_id).where(Language.is_active)), russian_id)

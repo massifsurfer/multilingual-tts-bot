@@ -25,9 +25,10 @@ async def run_bot(settings: Settings, token: str, consent_text: str) -> None:
         sessions = async_sessionmaker(engine, expire_on_commit=False)
         abuse = AbuseProtection(sessions, settings)
         storage = LocalStorage(settings.local_storage_path, min_free_bytes=settings.min_audio_free_bytes)
-        dispatcher.include_router(privacy_router(Maintenance(sessions, storage)))
+        participants = Participants(sessions)
+        dispatcher.include_router(privacy_router(Maintenance(sessions, storage), participants))
         dispatcher.include_router(admin_router(abuse, settings.admin_telegram_ids))
-        dispatcher.include_router(onboarding_router(Participants(sessions), consent_text))
+        dispatcher.include_router(onboarding_router(participants, consent_text))
         dispatcher.include_router(tasks_router(Assignments(sessions), abuse))
         dispatcher.include_router(voice_router(Recordings(
             sessions, storage,

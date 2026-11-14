@@ -21,7 +21,7 @@ class AssignmentsTest(IsolatedAsyncioTestCase):
         root = Path(directory.name)
         path = root / "test.sqlite"
         await initialize_database(path, (("rus", "Russian"), ("eng", "English")))
-        await initialize_database(path, (("rus", "Russian"),))
+        await initialize_database(path, (("rus", "Russian"), ("eng", "English")))
         engine = create_database_engine(path)
         self.addAsyncCleanup(engine.dispose)
         sessions = async_sessionmaker(engine, expire_on_commit=False)
