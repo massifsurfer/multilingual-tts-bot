@@ -1,0 +1,17 @@
+services:
+  bot:
+    build: .
+    restart: unless-stopped
+    user: "${BOT_UID:-1000}:${BOT_GID:-1000}"
+    env_file: .env
+    environment:
+      DATABASE_PATH: /app/data/database.sqlite
+      LOCAL_STORAGE_PATH: /app/data/audio
+    volumes:
+      - ./corpora.toml:/app/corpora.toml:ro
+      - ./data:/app/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

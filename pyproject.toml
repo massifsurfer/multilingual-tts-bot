@@ -1,0 +1,12 @@
+[project]
+name = "multilingual-tts-bot"
+version = "0.1.0"
+description = "Telegram bot for collecting multilingual speech datasets"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "aiogram>=3,<4",
+    "aiosqlite>=0.20,<1",
+    "python-dotenv>=1,<2",
+    "sqlalchemy[asyncio]>=2.0,<3",
+]
